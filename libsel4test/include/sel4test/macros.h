@@ -24,6 +24,7 @@
  */
 #ifdef CONFIG_PRINT_XML
 #include <stdio.h>
+#include <sel4test/testutil.h>
 #define printf(x, ...)  do {\
     char buffer[SEL4TEST_PRINT_BUFFER];\
     snprintf(buffer, SEL4TEST_PRINT_BUFFER, x, ##__VA_ARGS__);\
