@@ -132,7 +132,8 @@ load_segment(vspace_t *loadee_vspace, vspace_t *loader_vspace,
         seL4_ARM_Page_Unify_Instruction(loader_frame_cap.capPtr, 0, PAGE_SIZE_4K);
         seL4_ARM_Page_Unify_Instruction(loadee_frame_cap.capPtr, 0, PAGE_SIZE_4K);
 #endif /* CONFIG_ARCH_ARM */
-
+        asm volatile("fence.i" ::: "memory");
+        
         /* now unmap the page in the loader address space */
         vspace_unmap_pages(loader_vspace, (void *) loader_vaddr, 1, seL4_PageBits, VSPACE_PRESERVE);
         vka_cnode_delete(&loader_frame_cap);
