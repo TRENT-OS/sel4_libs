@@ -14,11 +14,36 @@
 #include <sel4platsupport/pmem.h>
 #include <utils/util.h>
 
+#if 0
+     { /*.start = */ 0x40000000, /* .end = */ 0x40100000},
+     { /*.start = */ 0x40280000, /* .end = */ 0x40800000},
+#endif
+
 int sel4platsupport_get_num_pmem_regions(UNUSED simple_t *simple) {
-    return 0;
+    return 2;
 }
 
 int sel4platsupport_get_pmem_region_list(UNUSED simple_t *simple, UNUSED size_t max_length, UNUSED pmem_region_t *region_list) {
-    ZF_LOGE("Not implemented");
-    return -1;
+    size_t k = max_length;
+    size_t i;
+    if (k > 2)
+    {
+        k = 2;
+    }
+
+    for (i = 0; i < k; i++) {
+        printf("seL4_test allocator - k: %d\n", i);
+        if (i == 0) {
+            region_list[i].type = PMEM_TYPE_DEVICE; //PMEM_TYPE_RAM;
+            region_list[i].base_addr = 0x40000000;
+            region_list[i].length  = 1024 * 1024;
+        }
+        if (i == 1) {
+            region_list[i].type = PMEM_TYPE_DEVICE; //PMEM_TYPE_RAM;
+            region_list[i].base_addr = 0x40400000;
+            region_list[i].length  = 4 * 1024 * 1024;
+        }
+    }
+
+    return i;
 }
