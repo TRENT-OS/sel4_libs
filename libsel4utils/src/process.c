@@ -374,7 +374,7 @@ int sel4utils_spawn_process_v(sel4utils_process_t *process, vka_t *vka, vspace_t
         return -1;
     }
 
-    ZF_LOGD("Starting process at %p, stack %p\n", process->entry_point, (void *) initial_stack_pointer);
+    ZF_LOGE("Starting process at %p, stack %p\n", process->entry_point, (void *) initial_stack_pointer);
     assert(initial_stack_pointer % (2 * sizeof(seL4_Word)) == 0);
     error = sel4utils_arch_init_context(process->entry_point, (void *) initial_stack_pointer, &context);
     if (error) {

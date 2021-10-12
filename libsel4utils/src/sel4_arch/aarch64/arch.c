@@ -31,6 +31,7 @@ int sel4utils_arch_init_context_with_args(sel4utils_thread_entry_fn entry_point,
                                           vka_t *vka, vspace_t *local_vspace, vspace_t *remote_vspace)
 {
 
+    ZF_LOGE("sel4utils_arch_init_context_with_args x0=%p, x1=%p entry=%p, stack=%p", arg0, arg1, entry_point, stack_top);
     context->x0 = (seL4_Word) arg0;
     context->x1 = (seL4_Word) arg1;
     context->x2 = (seL4_Word) arg2;
