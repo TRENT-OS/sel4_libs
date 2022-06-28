@@ -253,40 +253,43 @@ int platsupport_serial_setup_simple(
     return err;
 }
 
+/* this function is called if we attempt to do serial and it isn't setup.
+ * we now need to handle this somehow */
 static void __serial_setup()
 {
-    int started_regular __attribute__((unused)) = 0;
-    /* this function is called if we attempt to do serial and it isn't setup.
-     * we now need to handle this somehow */
     switch (setup_status) {
-    case START_FAILSAFE_SETUP:
+
+    case SETUP_COMPLETE:
+        return; /* Caller should not even call us in this state. */
+
+    case NOT_INITIALIZED:
+    case START_REGULAR_SETUP:
+        break;
+
+    default: /* includes START_FAILSAFE_SETUP */
         /* we're stuck. */
         abort();
-        break;
-    case START_REGULAR_SETUP:
-        started_regular = 1;
-    case NOT_INITIALIZED:
-#ifdef CONFIG_LIB_SEL4_PLAT_SUPPORT_USE_SEL4_DEBUG_PUTCHAR
-        setup_status = SETUP_COMPLETE;
-        printf("\nWarning: using printf before serial is set up. This only works as your\n");
-        printf("printf is backed by seL4_Debug_PutChar()\n");
-        started_regular = 1;
-#else
-        /* attempt failsafe initialization and print something out */
-        platsupport_serial_setup_bootinfo_failsafe();
-        if (started_regular) {
-            printf("Regular serial setup failed.\n"
-                   "This message coming to you courtesy of failsafe serial\n"
-                   "Your vspace has been clobbered but we will keep running to get any more error output\n");
-        } else {
-            printf("You attempted to print before initialising the libsel4platsupport serial device!\n");
-            while (1);
-        }
-#endif /* CONFIG_LIB_SEL4_PLAT_SUPPORT_USE_SEL4_DEBUG_PUTCHAR */
-        break;
-    case SETUP_COMPLETE:
-        break;
     }
+
+#ifdef CONFIG_LIB_SEL4_PLAT_SUPPORT_USE_SEL4_DEBUG_PUTCHAR
+    setup_status = SETUP_COMPLETE;
+    ZF_LOGI("skip serial setup and use kernel char I/O syscalls");
+#else
+    /* Attempt failsafe initialization to be able to print something. */
+    int err = platsupport_serial_setup_bootinfo_failsafe();
+    if (err || (START_REGULAR_SETUP != setup_status)) {
+        /* this may not proint anything */
+        ZF_LOGE("You attempted to print before initialising the"
+                " libsel4platsupport serial device!");
+        while (1);
+    }
+
+    /* Setup worked, so this warning will show up. */
+    ZF_LOGW("Regular serial setup failed.\n"
+            "This message coming to you courtesy of failsafe serial.\n"
+            "Your vspace has been clobbered but we will keep running"
+            " to get any more error output");
+#endif
 }
 
 void NO_INLINE
