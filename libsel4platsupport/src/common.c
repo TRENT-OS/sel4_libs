@@ -50,9 +50,6 @@ static vka_t *vka = NULL;
 /* To keep failsafe setup we need actual memory for a simple and a vka */
 static simple_t _simple_mem;
 static vka_t _vka_mem;
-
-/* Hacky constants / data structures for a failsafe mapping */
-#define DITE_HEADER_START ((seL4_Word)__executable_start - 0x1000)
 static seL4_CPtr device_cap = 0;
 extern char __executable_start[];
 
@@ -69,91 +66,52 @@ static ps_io_ops_t io_ops = {
 
 #endif
 
-/* completely hacky way of getting a virtual address. This is used a last ditch attempt to
- * get serial device going so we can print out an error */
-static seL4_Word platsupport_alloc_device_vaddr(seL4_Word bits)
-{
-    seL4_Word va;
-
-    va = DITE_HEADER_START - (BIT(bits));
-
-    /* Ensure we are aligned to bits. If not, round down. */
-    va = va & ~((BIT(bits)) - 1);
-
-    return va;
-}
-
-static void *__map_device_page_failsafe(void *cookie UNUSED, uintptr_t paddr, size_t size,
-                                        int cached UNUSED, ps_mem_flags_t flags UNUSED)
-{
-    int bits = CTZ(size);
-    int error;
-    seL4_Word vaddr = 0;
-    vka_object_t dest;
-
-    if (device_cap != 0) {
-        /* we only support a single page for the serial */
-        for (;;);
-    }
-
-    error = sel4platsupport_alloc_frame_at(vka, paddr, bits, &dest);
-    if (error != seL4_NoError) {
-        goto error;
-    }
-    device_cap = dest.cptr;
-
-    vaddr = platsupport_alloc_device_vaddr(bits);
-    error =
-        seL4_ARCH_Page_Map(
-            device_cap,
-            seL4_CapInitThreadPD,
-            vaddr,
-            seL4_AllRights,
-            0
-        );
-
-error:
-    if (error)
-        for (;;);
-
-    assert(!error);
-
-    return (void *)vaddr;
-}
-
-static void *__map_device_page_regular(void *cookie UNUSED, uintptr_t paddr, size_t size,
-                                       int cached UNUSED, ps_mem_flags_t flags UNUSED)
-{
-    int bits = CTZ(size);
-    void *vaddr;
-    int error;
-    vka_object_t dest;
-
-    error = sel4platsupport_alloc_frame_at(vka, paddr, bits, &dest);
-    if (error) {
-        ZF_LOGF("Failed to get cap for serial device frame");
-    }
-
-    vaddr = vspace_map_pages(vspace, &dest.cptr, NULL, seL4_AllRights, 1, bits, 0);
-    if (!vaddr) {
-        ZF_LOGF("Failed to map serial device :(\n");
-        for (;;);
-    }
-    device_cap = dest.cptr;
-
-    return (void *)vaddr;
-}
-
 void *__map_device_page(void *cookie, uintptr_t paddr, size_t size,
                         int cached, ps_mem_flags_t flags)
 {
-    if (setup_status == START_REGULAR_SETUP && vspace) {
-        return __map_device_page_regular(cookie, paddr, size, cached, flags);
-    } else if (setup_status == START_FAILSAFE_SETUP || !vspace) {
-        return __map_device_page_failsafe(cookie, paddr, size, cached, flags);
+    seL4_Error err;
+
+    if (0 != device_cap)
+        /* we only support a single page for the serial device. */
+        abort();
     }
-    printf("Unknown setup status!\n");
-    for (;;);
+
+    vka_object_t dest;
+    int bits = CTZ(size);
+    err = sel4platsupport_alloc_frame_at(vka, paddr, bits, &dest);
+    if (err) {
+        ZF_LOGE("Failed to get cap for serial device frame");
+        abort();
+    }
+
+    device_cap = dest.cptr;
+
+    if ((setup_status == START_REGULAR_SETUP) && vspace)  {
+        /* map device page regularly */
+        void *vaddr = vspace_map_pages(vspace, &dest.cptr, NULL, seL4_AllRights, 1, bits, 0);
+        if (!vaddr) {
+            ZF_LOGE("Failed to map serial device");
+            abort();
+        }
+        return vaddr;
+    }
+
+    /* Try a last ditch attempt to get serial device going, so we can print out
+     * an error. Find a properly aligned virtual address and try to map the
+     * device cap there.
+     */
+    if ((setup_status == START_FAILSAFE_SETUP) || !vspace) {
+        seL4_Word header_start = ((seL4_Word)__executable_start - PAGE_SIZE_4K;
+        seL4_Word vaddr = (header_start - BIT(bits)) & ~(BIT(bits) - 1);
+        err = seL4_ARCH_Page_Map(device_cap, seL4_CapInitThreadPD, vaddr, seL4_AllRights, 0);
+        if (err) {
+            abort();
+        }
+        return (void *)vaddr;
+    }
+
+    ZF_LOGE("invalid setup state %d", setup_status);
+    abort();
 }
 
 /*
