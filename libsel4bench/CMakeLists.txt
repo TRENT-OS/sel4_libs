@@ -8,6 +8,19 @@ cmake_minimum_required(VERSION 3.7.2)
 
 project(libsel4bench C)
 
+# Do a fail-safe check that all required configuration variables are set up
+set(CHECK_CFG_VARS "KernelArch;KernelSel4Arch;KernelWordSize")
+if(KernelArchARM)
+    list(APPEND CHECK_CFG_VARS "KernelArmArmV;KernelArmCPU")
+endif()
+foreach(cfg_var IN LISTS CHECK_CFG_VARS)
+    if((NOT DEFINED ${cfg_var}) OR (NOT ${cfg_var}))
+        message(FATAL "${PROJECT_NAME} requires setting ${cfg_var}")
+    endif()
+    message("${PROJECT_NAME} ${cfg_var}: ${${cfg_var}}")
+endforeach()
+
+
 file(
     GLOB
         deps
