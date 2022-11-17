@@ -32,8 +32,8 @@
 #include <simple-default/simple-default.h>
 #include <utils/util.h>
 
-#if defined(CONFIG_LIB_SEL4_PLAT_SUPPORT_USE_SEL4_DEBUG_PUTCHAR) && defined(CONFIG_DEBUG_BUILD)
-#define USE_DEBUG_PUTCHAR
+#if !(defined(CONFIG_LIB_SEL4_PLAT_SUPPORT_USE_SEL4_DEBUG_PUTCHAR) || defined(CONFIG_DEBUG_BUILD))
+#define USE_DEBUG_HARDWARE
 #endif
 
 enum serial_setup_status {
@@ -42,40 +42,38 @@ enum serial_setup_status {
     START_FAILSAFE_SETUP,
     SETUP_COMPLETE
 };
-static enum serial_setup_status setup_status = NOT_INITIALIZED;
 
-/* Some globals for tracking initialisation variables. This is currently just to avoid
- * passing parameters down to the platform code for backwards compatibility reasons. This
- * is strictly to avoid refactoring all existing platform code */
-static vspace_t *vspace = NULL;
-static UNUSED simple_t *simple = NULL;
-static vka_t *vka = NULL;
-
-/* To keep failsafe setup we need actual memory for a simple and a vka */
-static simple_t _simple_mem;
-static vka_t _vka_mem;
-static seL4_CPtr device_cap = 0;
-extern char __executable_start[];
-
-#ifndef USE_DEBUG_PUTCHAR
-static void *__map_device_page(void *cookie, uintptr_t paddr, size_t size,
-                               int cached, ps_mem_flags_t flags);
-
-static ps_io_ops_t io_ops = {
-    .io_mapper = {
-        .io_map_fn = &__map_device_page,
-        .io_unmap_fn = NULL,
-    },
-};
+typedef struct {
+    enum serial_setup_status setup_status;
+#if USE_DEBUG_HARDWARE
+    ps_io_ops_t io_ops;
+    seL4_CPtr device_cap;
+    vka_t *vka;
+    vspace_t *vspace;
+    /* To keep failsafe setup we need actual memory for a simple and a vka */
+    simple_t simple_mem;
+    vka_t vka_mem;
 
 #endif
+} ctx_t;
 
-void *__map_device_page(void *cookie, uintptr_t paddr, size_t size,
-                        int cached, ps_mem_flags_t flags)
+/* Tracking initialisation variables. This is currently just to avoid passing
+ * parameters down to the platform code for backwards compatibility reasons.
+ * This is strictly to avoid refactoring all existing platform code
+ */
+static ctx_t ctx = {
+    .setup_status = NOT_INITIALIZED
+};
+
+extern char __executable_start[];
+
+#if USE_DEBUG_HARDWARE
+static void *__map_device_page(void *cookie, uintptr_t paddr, size_t size,
+                               int cached, ps_mem_flags_t flags)
 {
     seL4_Error err;
 
-    if (0 != device_cap)
+    if (0 != ctx.device_cap)
         /* we only support a single page for the serial device. */
         abort();
         UNRECHABLE();
@@ -90,11 +88,11 @@ void *__map_device_page(void *cookie, uintptr_t paddr, size_t size,
         UNRECHABLE();
     }
 
-    device_cap = dest.cptr;
+    ctx.device_cap = dest.cptr;
 
-    if ((setup_status == START_REGULAR_SETUP) && vspace)  {
+    if ((setup_status == START_REGULAR_SETUP) && ctx.vspace)  {
         /* map device page regularly */
-        void *vaddr = vspace_map_pages(vspace, &dest.cptr, NULL, seL4_AllRights, 1, bits, 0);
+        void *vaddr = vspace_map_pages(ctx.vspace, &dest.cptr, NULL, seL4_AllRights, 1, bits, 0);
         if (!vaddr) {
             ZF_LOGE("Failed to map serial device");
             abort();
@@ -107,7 +105,7 @@ void *__map_device_page(void *cookie, uintptr_t paddr, size_t size,
      * an error. Find a properly aligned virtual address and try to map the
      * device cap there.
      */
-    if ((setup_status == START_FAILSAFE_SETUP) || !vspace) {
+    if ((setup_status == START_FAILSAFE_SETUP) || !ctx.vspace) {
         seL4_Word header_start = ((seL4_Word)__executable_start - PAGE_SIZE_4K;
         seL4_Word vaddr = (header_start - BIT(bits)) & ~(BIT(bits) - 1);
         err = seL4_ARCH_Page_Map(device_cap, seL4_CapInitThreadPD, vaddr, seL4_AllRights, 0);
@@ -122,6 +120,19 @@ void *__map_device_page(void *cookie, uintptr_t paddr, size_t size,
     abort();
 }
 
+static int __setup_io_ops(
+    simple_t *simple __attribute__((unused)))
+{
+    ctx.io_ops.io_map_fn = &__map_device_page;
+
+#ifdef CONFIG_ARCH_X86
+    sel4platsupport_get_io_port_ops(&ctx.io_ops.io_port_ops, simple, ctx.vka);
+#endif
+    return platsupport_serial_setup_io_ops(&ctx.io_ops);
+}
+
+#endif /* USE_DEBUG_HARDWARE */
+
 /*
  * This function is designed to be called when creating a new cspace/vspace,
  * and the serial port needs to be hooked in there too.
@@ -129,16 +140,18 @@ void *__map_device_page(void *cookie, uintptr_t paddr, size_t size,
 void platsupport_undo_serial_setup(void)
 {
     /* Re-initialise some structures. */
-    setup_status = NOT_INITIALIZED;
-    if (device_cap) {
+    ctx.setup_status = NOT_INITIALIZED;
+#if USE_DEBUG_HARDWARE
+    if (ctx.device_cap) {
         cspacepath_t path;
-        seL4_ARCH_Page_Unmap(device_cap);
-        vka_cspace_make_path(vka, device_cap, &path);
+        seL4_ARCH_Page_Unmap(ctx.device_cap);
+        vka_cspace_make_path(ctx.vka, device_cap, &path);
         vka_cnode_delete(&path);
-        vka_cspace_free(vka, device_cap);
-        device_cap = 0;
-        vka = NULL;
+        vka_cspace_free(ctx.vka, ctx.device_cap);
+        ctx.device_cap = 0;
     }
+    ctx.vka = NULL;
+#endif /* USE_DEBUG_HARDWARE */
 }
 
 /* Initialise serial input interrupt. */
@@ -149,73 +162,67 @@ void platsupport_serial_input_init_IRQ(void)
 int platsupport_serial_setup_io_ops(ps_io_ops_t *io_ops)
 {
     int err = 0;
-    if (setup_status == SETUP_COMPLETE) {
+    if (ctx.setup_status == SETUP_COMPLETE) {
         return 0;
     }
     err = __plat_serial_init(io_ops);
     if (!err) {
-        setup_status = SETUP_COMPLETE;
+        ctx.setup_status = SETUP_COMPLETE;
     }
     return err;
 }
 
 int platsupport_serial_setup_bootinfo_failsafe(void)
 {
-    int err = 0;
-    if (setup_status == SETUP_COMPLETE) {
+    if (ctx.setup_status == SETUP_COMPLETE) {
         return 0;
     }
-    memset(&_simple_mem, 0, sizeof(simple_t));
-    memset(&_vka_mem, 0, sizeof(vka_t));
-#if USE_DEBUG_PUTCHAR
-    /* only support putchar on a debug kernel */
-    setup_status = SETUP_COMPLETE;
-#else /* not USE_DEBUG_PUTCHAR */
-    setup_status = START_FAILSAFE_SETUP;
-    simple_default_init_bootinfo(&_simple_mem, platsupport_get_bootinfo());
-    simple = &_simple_mem;
-    vka = &_vka_mem;
+
+#if USE_DEBUG_HARDWARE
+    ctx.setup_status = START_FAILSAFE_SETUP;
+
+    simple_t *simple = &(ctx.simple_mem);
+    memset(simple, 0, sizeof(*simple));
+
+    vka_t *vka = &(ctx.vka_mem);
+    memset(vka, 0, sizeof(*vka));
+
+    simple_default_init_bootinfo(simple, platsupport_get_bootinfo());
     simple_make_vka(simple, vka);
-#ifdef CONFIG_ARCH_X86
-    sel4platsupport_get_io_port_ops(&io_ops.io_port_ops, simple, vka);
+    ctx.vka = vka;
+
+    return __setup_io_ops(simple);
+#else
+    /* only support putchar on a debug kernel */
+    ctx.setup_status = SETUP_COMPLETE;
+    return 0;
 #endif
-    err = platsupport_serial_setup_io_ops(&io_ops);
-#endif /* [not] USE_DEBUG_PUTCHAR */
-    return err;
 }
 
 int platsupport_serial_setup_simple(
-    vspace_t *_vspace __attribute__((unused)),
-    simple_t *_simple __attribute__((unused)),
-    vka_t *_vka __attribute__((unused)))
+    vspace_t *vspace __attribute__((unused)),
+    simple_t *simple __attribute__((unused)),
+    vka_t *vka __attribute__((unused)))
 {
     int err = 0;
-    if (setup_status == SETUP_COMPLETE) {
+    if (ctx.setup_status == SETUP_COMPLETE) {
         return 0;
     }
-    if (setup_status != NOT_INITIALIZED) {
+    if (ctx.setup_status != NOT_INITIALIZED) {
         ZF_LOGE("Trying to initialise a partially initialised serial. Current setup status is %d\n", ctx.setup_status);
         assert(!"You cannot recover");
         return -1;
     }
-#if USE_DEBUG_PUTCHAR
-    /* only support putchar on a debug kernel */
-    setup_status = SETUP_COMPLETE;
-#else /* not USE_DEBUG_PUTCHAR */
+#if USE_DEBUG_HARDWARE
     /* start setup */
-    setup_status = START_REGULAR_SETUP;
-    vspace = _vspace;
-    simple = _simple;
-    vka = _vka;
-#ifdef CONFIG_ARCH_X86
-    sel4platsupport_get_io_port_ops(&io_ops.io_port_ops, simple, vka);
+    ctx.setup_status = START_REGULAR_SETUP;
+    ctx.vspace = vspace;
+    ctx.vka = vka;
+    err = __setup_io_ops(simple); /* uses global variables simple and vka */
+#else
+    /* only support putchar on a debug kernel */
+    ctx.setup_status = SETUP_COMPLETE;
 #endif
-    err = platsupport_serial_setup_io_ops(&io_ops);
-    /* done */
-    vspace = NULL;
-    simple = NULL;
-    /* Don't reset vka here */
-#endif /* [not] USE_DEBUG_PUTCHAR */
     return err;
 }
 
@@ -223,7 +230,7 @@ int platsupport_serial_setup_simple(
  * we now need to handle this somehow */
 static void __serial_setup()
 {
-    switch (setup_status) {
+    switch (ctx.setup_status) {
 
     case SETUP_COMPLETE:
         return; /* Caller should not even call us in this state. */
@@ -238,12 +245,12 @@ static void __serial_setup()
     }
 
 #ifdef CONFIG_LIB_SEL4_PLAT_SUPPORT_USE_SEL4_DEBUG_PUTCHAR
-    setup_status = SETUP_COMPLETE;
+    ctx.setup_status = SETUP_COMPLETE;
     ZF_LOGI("skip serial setup and use kernel char I/O syscalls");
 #else
     /* Attempt failsafe initialization to be able to print something. */
     int err = platsupport_serial_setup_bootinfo_failsafe();
-    if (err || (START_REGULAR_SETUP != setup_status)) {
+    if (err || (START_REGULAR_SETUP != ctx.setup_status)) {
         /* this may not proint anything */
         ZF_LOGE("You attempted to print before initialising the"
                 " libsel4platsupport serial device!");
@@ -265,7 +272,7 @@ WEAK
 #endif
 __arch_putchar(int c)
 {
-    if (setup_status != SETUP_COMPLETE) {
+    if (ctx.setup_status != SETUP_COMPLETE) {
         __serial_setup();
     }
     __plat_putchar(c);
@@ -285,7 +292,7 @@ __arch_write(char *data, size_t count)
 
 int __arch_getchar(void)
 {
-    if (setup_status != SETUP_COMPLETE) {
+    if (ctx.setup_status != SETUP_COMPLETE) {
         __serial_setup();
     }
     return __plat_getchar();
