@@ -32,6 +32,10 @@
 #include <simple-default/simple-default.h>
 #include <utils/util.h>
 
+#if defined(CONFIG_LIB_SEL4_PLAT_SUPPORT_USE_SEL4_DEBUG_PUTCHAR) && defined(CONFIG_DEBUG_BUILD)
+#define USE_DEBUG_PUTCHAR
+#endif
+
 enum serial_setup_status {
     NOT_INITIALIZED = 0,
     START_REGULAR_SETUP,
@@ -53,7 +57,7 @@ static vka_t _vka_mem;
 static seL4_CPtr device_cap = 0;
 extern char __executable_start[];
 
-#if !(defined(CONFIG_LIB_SEL4_PLAT_SUPPORT_USE_SEL4_DEBUG_PUTCHAR) && defined(CONFIG_DEBUG_BUILD))
+#ifndef USE_DEBUG_PUTCHAR
 static void *__map_device_page(void *cookie, uintptr_t paddr, size_t size,
                                int cached, ps_mem_flags_t flags);
 
@@ -163,10 +167,10 @@ int platsupport_serial_setup_bootinfo_failsafe(void)
     }
     memset(&_simple_mem, 0, sizeof(simple_t));
     memset(&_vka_mem, 0, sizeof(vka_t));
-#if defined(CONFIG_LIB_SEL4_PLAT_SUPPORT_USE_SEL4_DEBUG_PUTCHAR) && defined(CONFIG_DEBUG_BUILD)
+#if USE_DEBUG_PUTCHAR
     /* only support putchar on a debug kernel */
     setup_status = SETUP_COMPLETE;
-#else
+#else /* not USE_DEBUG_PUTCHAR */
     setup_status = START_FAILSAFE_SETUP;
     simple_default_init_bootinfo(&_simple_mem, platsupport_get_bootinfo());
     simple = &_simple_mem;
@@ -176,7 +180,7 @@ int platsupport_serial_setup_bootinfo_failsafe(void)
     sel4platsupport_get_io_port_ops(&io_ops.io_port_ops, simple, vka);
 #endif
     err = platsupport_serial_setup_io_ops(&io_ops);
-#endif
+#endif /* [not] USE_DEBUG_PUTCHAR */
     return err;
 }
 
@@ -194,10 +198,10 @@ int platsupport_serial_setup_simple(
         assert(!"You cannot recover");
         return -1;
     }
-#if defined(CONFIG_LIB_SEL4_PLAT_SUPPORT_USE_SEL4_DEBUG_PUTCHAR) && defined(CONFIG_DEBUG_BUILD)
+#if USE_DEBUG_PUTCHAR
     /* only support putchar on a debug kernel */
     setup_status = SETUP_COMPLETE;
-#else
+#else /* not USE_DEBUG_PUTCHAR */
     /* start setup */
     setup_status = START_REGULAR_SETUP;
     vspace = _vspace;
@@ -211,7 +215,7 @@ int platsupport_serial_setup_simple(
     vspace = NULL;
     simple = NULL;
     /* Don't reset vka here */
-#endif
+#endif /* [not] USE_DEBUG_PUTCHAR */
     return err;
 }
 
