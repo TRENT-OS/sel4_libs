@@ -74,6 +74,7 @@ void *__map_device_page(void *cookie, uintptr_t paddr, size_t size,
     if (0 != device_cap)
         /* we only support a single page for the serial device. */
         abort();
+        UNRECHABLE();
     }
 
     vka_object_t dest;
@@ -82,6 +83,7 @@ void *__map_device_page(void *cookie, uintptr_t paddr, size_t size,
     if (err) {
         ZF_LOGE("Failed to get cap for serial device frame");
         abort();
+        UNRECHABLE();
     }
 
     device_cap = dest.cptr;
@@ -92,6 +94,7 @@ void *__map_device_page(void *cookie, uintptr_t paddr, size_t size,
         if (!vaddr) {
             ZF_LOGE("Failed to map serial device");
             abort();
+            UNRECHABLE();
         }
         return vaddr;
     }
@@ -106,6 +109,7 @@ void *__map_device_page(void *cookie, uintptr_t paddr, size_t size,
         err = seL4_ARCH_Page_Map(device_cap, seL4_CapInitThreadPD, vaddr, seL4_AllRights, 0);
         if (err) {
             abort();
+            UNRECHABLE();
         }
         return (void *)vaddr;
     }
@@ -186,7 +190,7 @@ int platsupport_serial_setup_simple(
         return 0;
     }
     if (setup_status != NOT_INITIALIZED) {
-        printf("Trying to initialise a partially initialised serial. Current setup status is %d\n", setup_status);
+        ZF_LOGE("Trying to initialise a partially initialised serial. Current setup status is %d\n", ctx.setup_status);
         assert(!"You cannot recover");
         return -1;
     }
@@ -239,7 +243,8 @@ static void __serial_setup()
         /* this may not proint anything */
         ZF_LOGE("You attempted to print before initialising the"
                 " libsel4platsupport serial device!");
-        while (1);
+        abort();
+        UNRECHABLE();
     }
 
     /* Setup worked, so this warning will show up. */
