@@ -1111,10 +1111,9 @@ int allocman_add_simple_untypeds_with_regions(allocman_t *alloc, simple_t *simpl
     int error = prepare_handle_device_untyped_cap(alloc, simple, &state, num_regions, region_list);
     ZF_LOGF_IF(error, "bootstrap_prepare_handle_device_untyped_cap Failed");
 
-    int i;
     int total_untyped = simple_get_untyped_count(simple);
 
-    for(i = 0; i < total_untyped; i++) {
+    for(int i = 0; i < total_untyped; i++) {
         size_t size_bits;
         uintptr_t paddr;
         bool device;
