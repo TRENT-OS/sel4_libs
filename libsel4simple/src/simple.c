@@ -8,9 +8,12 @@
 
 bool simple_is_untyped_cap(simple_t *simple, seL4_CPtr pos)
 {
-    int i;
+    int cnt = simple_get_untyped_count(simple);
+    if (cnt < 0) {
+        return false;
+    }
 
-    for (i = 0; i < simple_get_untyped_count(simple); i++) {
+    for (int i = 0; i < cnt; i++) {
         seL4_CPtr ut_pos = simple_get_nth_untyped(simple, i, NULL, NULL, NULL);
         if (ut_pos == pos) {
             return true;
